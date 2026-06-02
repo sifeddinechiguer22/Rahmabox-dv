@@ -1,0 +1,6 @@
+{
+  "name": "RahmaBox",
+  "description": "Application humanitaire moderne de dons d'objets pour transformer le désordre en espoir rattaché à sa communauté.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
