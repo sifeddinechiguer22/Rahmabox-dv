@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { User, LogOut, ChevronRight, Award, Plus, Calendar, Star, Building, Heart, BadgeCheck } from 'lucide-react';
+import { User, LogOut, Award, Plus, Building2, Heart, BadgeCheck, Gift, Home, HandHeart, Package } from 'lucide-react';
 import { UserProfile, DonationItem, UserRole } from '../types';
 
 interface ProfileViewProps {
@@ -26,12 +26,12 @@ export default function ProfileView({ userProfile, myItems, onDisconnectProfile,
     center: 'Point de Collecte Social',
   };
 
-  const roleEmojis: Record<UserRole, string> = {
-    donor: '🎁',
-    beneficiary: '🏡',
-    association: '🏢',
-    volunteer: '🤝',
-    center: '📦',
+  const roleIcons: Record<UserRole, React.ReactNode> = {
+    donor: <Gift className="w-4 h-4" />,
+    beneficiary: <Home className="w-4 h-4" />,
+    association: <Building2 className="w-4 h-4" />,
+    volunteer: <HandHeart className="w-4 h-4" />,
+    center: <Package className="w-4 h-4" />,
   };
 
   const conditionLabels: Record<string, string> = {
@@ -65,8 +65,8 @@ export default function ProfileView({ userProfile, myItems, onDisconnectProfile,
               </span>
             </div>
 
-            <p className="text-secondary text-xs sm:text-sm font-semibold flex items-center justify-center sm:justify-start gap-1">
-              <span>{roleEmojis[userProfile.role] || '📦'}</span>
+            <p className="text-secondary text-xs sm:text-sm font-semibold flex items-center justify-center sm:justify-start gap-1.5">
+              <span className="inline-flex">{roleIcons[userProfile.role]}</span>
               <span>{roleLabels[userProfile.role] || userProfile.role}</span>
             </p>
 

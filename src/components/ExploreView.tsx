@@ -3,9 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
-import { Search, MapPin, Grid, Layers, Eye, Smartphone, AlertCircle, ShoppingBag, EyeOff } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Search, MapPin, AlertCircle, Loader } from 'lucide-react';
 import { DonationItem } from '../types';
+import { apiService } from '../services/apiService';
+
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+// Fix Leaflet marker icon issue in Vite build
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerIconRetina from 'leaflet/dist/images/marker-icon-2x.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const DefaultIcon = L.icon({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIconRetina,
+  shadowUrl: markerShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  tooltipAnchor: [16, -28],
+  shadowSize: [41, 41]
+});
+
+L.Marker.prototype.options.icon = DefaultIcon;
 
 interface ExploreViewProps {
   items: DonationItem[];
@@ -17,20 +39,159 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [hoveredItem, setHoveredItem] = useState<DonationItem | null>(null);
+  
+  // Geolocation states
+  const [localItems, setLocalItems] = useState<DonationItem[]>(items);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [radius, setRadius] = useState<number | 'all'>('all');
+  const [gpsLoading, setGpsLoading] = useState<boolean>(false);
+  const [apiLoading, setApiLoading] = useState<boolean>(false);
 
-  // Filters from the screenshots
-  const filters = [
+  // Map references
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<L.Map | null>(null);
+  const markersLayer = useRef<L.LayerGroup | null>(null);
+
+  // Sync prop items to localItems on mount or when items prop updates
+  useEffect(() => {
+    setLocalItems(items);
+  }, [items]);
+
+  // Request browser geolocation on mount
+  useEffect(() => {
+    if ('geolocation' in navigator) {
+      setGpsLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+          setUserCoords(coords);
+          setGpsLoading(false);
+          initMap(coords.lat, coords.lng);
+        },
+        (error) => {
+          console.warn("GPS Geolocation failed, defaulting to Casablanca:", error);
+          setGpsLoading(false);
+          const defaultCoords = { lat: 33.5731, lng: -7.5898 }; // Casablanca Center
+          setUserCoords(defaultCoords);
+          initMap(defaultCoords.lat, defaultCoords.lng);
+        }
+      );
+    } else {
+      const defaultCoords = { lat: 33.5731, lng: -7.5898 };
+      setUserCoords(defaultCoords);
+      initMap(defaultCoords.lat, defaultCoords.lng);
+    }
+
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+    };
+  }, []);
+
+  // Initialize Map
+  const initMap = (lat: number, lng: number) => {
+    if (!mapRef.current || mapInstance.current) return;
+
+    const map = L.map(mapRef.current).setView([lat, lng], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    mapInstance.current = map;
+    markersLayer.current = L.layerGroup().addTo(map);
+  };
+
+  // Draw markers whenever localItems, userCoords, mapInstance or viewMode changes
+  useEffect(() => {
+    const map = mapInstance.current;
+    const layer = markersLayer.current;
+    if (!map || !layer || viewMode !== 'map') return;
+
+    // Clear old markers
+    layer.clearLayers();
+
+    // 1. Draw User marker (pulsating circle)
+    if (userCoords) {
+      L.circleMarker([userCoords.lat, userCoords.lng], {
+        radius: 8,
+        fillColor: '#3b82f6',
+        color: '#ffffff',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.9
+      }).addTo(layer).bindPopup("<strong style='color:#3b82f6;'>Votre position actuelle</strong>");
+    }
+
+    // 2. Draw Donation markers
+    localItems.forEach((item) => {
+      if (item.latitude !== undefined && item.longitude !== undefined && item.latitude !== null && item.longitude !== null) {
+        const popupContent = document.createElement('div');
+        popupContent.style.width = '170px';
+        popupContent.style.fontFamily = 'Inter, sans-serif';
+        popupContent.innerHTML = `
+          <img src="${item.imageUrl}" style="width:100%; height:90px; object-fit:cover; border-radius:8px;" />
+          <h4 style="margin:8px 0 4px; font-weight:bold; font-size:12px; color:#1e293b;">${item.title}</h4>
+          <p style="margin:0 0 6px; font-size:10px; color:#64748b;">${item.location}</p>
+          ${item.distance !== undefined ? `<p style="margin:0 0 8px; font-size:10px; color:#10b981; font-weight:600;">Distance : ${item.distance} km</p>` : ''}
+          <button id="view-btn-${item.id}" style="width:100%; padding:6px 0; background-color:#3b82f6; color:#ffffff; border:none; border-radius:6px; font-size:10px; font-weight:bold; cursor:pointer;">Consulter</button>
+        `;
+
+        const marker = L.marker([item.latitude, item.longitude])
+          .addTo(layer)
+          .bindPopup(popupContent);
+
+        marker.on('popupopen', () => {
+          const btn = document.getElementById(`view-btn-${item.id}`);
+          if (btn) {
+            btn.onclick = () => {
+              onSelectItem(item);
+            };
+          }
+        });
+      }
+    });
+
+  }, [localItems, userCoords, viewMode]);
+
+  // Handle distance proximity filter change
+  const handleRadiusChange = async (r: number | 'all') => {
+    setRadius(r);
+    setApiLoading(true);
+
+    try {
+      if (r === 'all') {
+        const allItems = await apiService.getItems();
+        setLocalItems(allItems);
+      } else if (userCoords) {
+        const filtered = await apiService.getItems({
+          latitude: userCoords.lat,
+          longitude: userCoords.lng,
+          radius: r
+        });
+        setLocalItems(filtered);
+      }
+    } catch (e) {
+      console.error("Failed to filter items by distance:", e);
+    } finally {
+      setApiLoading(false);
+    }
+  };
+
+  // Category filter chips
+  const categoriesList = [
     { id: 'all', label: 'Tout' },
-    { id: 'nearby', label: 'Proches', icon: 'near_me' },
-    { id: 'newest', label: 'Récents' },
     { id: 'furniture', label: 'Mobilier' },
     { id: 'appliances', label: 'Électroménager' },
+    { id: 'clothing', label: 'Vêtements' },
+    { id: 'education', label: 'Éducation' },
   ];
 
-  // Filtering logic
+  // Filtering logic in frontend (for search query and categories)
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    return localItems.filter(item => {
       const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                             item.location.toLowerCase().includes(searchQuery.toLowerCase());
       
@@ -39,18 +200,16 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
         matchesFilter = item.category.toLowerCase().includes('furniture') || item.category.toLowerCase().includes('mobilier');
       } else if (selectedFilter === 'appliances') {
         matchesFilter = item.category.toLowerCase().includes('appliance') || item.category.toLowerCase().includes('électro');
-      } else if (selectedFilter === 'newest') {
-        // simulation (e.g. newer listed ones)
-        matchesFilter = true;
-      } else if (selectedFilter === 'nearby') {
-        matchesFilter = item.location.includes('Brooklyn') || item.location.includes('Queens') || item.location.includes('Downtown');
+      } else if (selectedFilter === 'clothing') {
+        matchesFilter = item.category.toLowerCase().includes('cloth') || item.category.toLowerCase().includes('vêtement');
+      } else if (selectedFilter === 'education') {
+        matchesFilter = item.category.toLowerCase().includes('education') || item.category.toLowerCase().includes('livre');
       }
 
       return matchesSearch && matchesFilter;
     });
-  }, [items, searchQuery, selectedFilter]);
+  }, [localItems, searchQuery, selectedFilter]);
 
-  // Clean condition mappings
   const conditionLabels: Record<string, string> = {
     new: 'Neuf',
     excellent: 'Excellent',
@@ -69,16 +228,16 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
           <Search className="absolute left-4 w-5 h-5 text-slate-400 pointer-events-none" />
           <input 
             type="text"
-            placeholder="Rechercher des dons ou villes (ex: Brooklyn, NY)..."
+            placeholder="Rechercher des dons ou villes (ex: Maarif)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/15 transition-all text-sm outline-hidden placeholder:text-slate-400"
           />
         </div>
 
-        {/* Chips filter list */}
+        {/* Categories filters list */}
         <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 max-w-lg mx-auto shrink-0">
-          {filters.map((filter) => (
+          {categoriesList.map((filter) => (
             <button
               key={filter.id}
               onClick={() => setSelectedFilter(filter.id)}
@@ -91,6 +250,32 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
               {filter.label}
             </button>
           ))}
+        </div>
+
+        {/* Distance Proximity Filter */}
+        <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 max-w-lg mx-auto shrink-0 border-t border-slate-100 pt-2.5 items-center">
+          <span className="text-xs font-bold text-slate-400 whitespace-nowrap mr-1">Rayon (GPS) :</span>
+          {([
+            { id: 'all', label: 'Tout' },
+            { id: 5, label: 'Dans les 5 km' },
+            { id: 10, label: 'Dans les 10 km' },
+            { id: 25, label: 'Dans les 25 km' },
+            { id: 50, label: 'Dans les 50 km' }
+          ] as { id: number | 'all', label: string }[]).map((dist) => (
+            <button
+              key={dist.id}
+              disabled={dist.id !== 'all' && !userCoords}
+              onClick={() => handleRadiusChange(dist.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap cursor-pointer transition-all ${
+                radius === dist.id
+                  ? 'bg-secondary text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50'
+              }`}
+            >
+              {dist.label}
+            </button>
+          ))}
+          {apiLoading && <Loader className="w-4 h-4 text-primary animate-spin ml-2 shrink-0" />}
         </div>
       </div>
 
@@ -124,118 +309,38 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
         </div>
 
         {/* VIEW 1: MAP VIEW */}
-        {viewMode === 'map' && (
-          <div className="absolute inset-0 w-full h-full overflow-hidden select-none">
-            
-            {/* Custom interactive Vector landscape background illustration representing Amman/NY roads & block networks */}
-            <svg className="w-full h-full min-w-[700px] bg-slate-100" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" strokeWidth="1" />
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#grid)" />
-              
-              {/* Central city park */}
-              <rect x="15%" y="20%" width="30%" height="25%" rx="12" fill="#dcfce7" opacity="0.85" />
-              <text x="30%" y="33%" fill="#166534" className="text-xs font-semibold" textAnchor="middle">Parc de la Fraternité</text>
-
-              {/* Waterway / Canal */}
-              <path d="M-50,300 C200,280 400,450 900,400" fill="none" stroke="#e0f2fe" strokeWidth="48" strokeLinecap="round" opacity="0.9" />
-              <text x="450" y="440" fill="#0369a1" className="text-[10px] font-bold" transform="rotate(10 450 440)">Fleuve d'Entraide</text>
-
-              {/* District blocks */}
-              <rect x="60%" y="15%" width="25%" height="18%" rx="10" fill="#f1f5f9" stroke="#cbd5e1" strokeDasharray="3 3" />
-              <text x="72%" y="25%" fill="#475569" className="text-[10px] uppercase font-bold" textAnchor="middle">Zone Commerciale</text>
-
-              <rect x="55%" y="55%" width="30%" height="30%" rx="10" fill="#f1f5f9" stroke="#cbd5e1" strokeDasharray="3 3" />
-              <text x="70%" y="70%" fill="#475569" className="text-[10px] uppercase font-bold" textAnchor="middle">Quartier Résidentiel</text>
-
-              {/* Primary roads system */}
-              <line x1="0" y1="50%" x2="100%" y2="50%" stroke="#ffffff" strokeWidth="22" />
-              <line x1="0" y1="50%" x2="100%" y2="50%" stroke="#cbd5e1" strokeWidth="2" strokeDasharray="6 4" />
-              
-              <line x1="50%" y1="0" x2="50%" y2="100%" stroke="#ffffff" strokeWidth="22" />
-              <line x1="50%" y1="0" x2="50%" y2="100%" stroke="#cbd5e1" strokeWidth="2" strokeDasharray="6 4" />
-            </svg>
-
-            {/* Gradient bottom and top labels */}
-            <div className="absolute top-16 left-4 bg-slate-900/80 text-white text-[10px] py-1 px-2.5 rounded-full backdrop-blur-xs font-mono font-medium">
-              Simulation GPS : {filteredItems.length} dons localisés
+        <div className={`absolute inset-0 w-full h-full z-10 ${viewMode === 'map' ? 'block' : 'hidden'}`}>
+          <div ref={mapRef} style={{ height: '100%', width: '100%' }} className="z-10 bg-slate-100" />
+          
+          {/* Geolocation status indicator */}
+          {userCoords && (
+            <div className="absolute top-16 left-4 bg-slate-900/80 text-white text-[10px] py-1.5 px-3 rounded-full backdrop-blur-xs font-mono font-medium z-20">
+              GPS Actif : {filteredItems.length} dons à proximité
             </div>
+          )}
 
-            {/* Interactive Pins overlay mapping */}
-            {filteredItems.map((item, idx) => {
-              const isHovered = hoveredItem?.id === item.id;
-              const emojiIcon = item.category.toLowerCase().includes('furniture') ? '🛋️' :
-                                item.category.toLowerCase().includes('cloth') ? '👕' :
-                                item.category.toLowerCase().includes('appliances') ? '🔌' :
-                                item.category.toLowerCase().includes('toys') ? '🧸' : '📚';
-
-              return (
-                <div 
-                  key={item.id}
-                  className="absolute transition-transform duration-300 transform -translate-x-1/2 -translate-y-1/2 z-20 hover:scale-110"
-                  style={{ left: `${item.coordinates.x}%`, top: `${item.coordinates.y}%` }}
-                >
-                  <div className="relative">
-                    {/* Ring aura indicator */}
-                    <div className="absolute -inset-3 bg-primary/20 rounded-full animate-ping pointer-events-none" style={{ animationDelay: `${idx * 0.4}s` }}></div>
-                    
-                    {/* Main trigger map pin */}
-                    <button
-                      onClick={() => setHoveredItem(isHovered ? null : item)}
-                      className={`w-10 h-10 rounded-full border-2 border-white flex items-center justify-center shadow-md relative z-10 cursor-pointer transition-all focus:outline-hidden ${
-                        isHovered ? 'bg-secondary text-white scale-110' : 'bg-primary text-white'
-                      }`}
-                    >
-                      <span className="text-xl">{emojiIcon}</span>
-                    </button>
-
-                    {/* Hover status Tooltip detail card popup */}
-                    {isHovered && (
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-48 bg-white rounded-xl shadow-2xl border border-slate-200 p-2.5 z-30 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                        <img 
-                          src={item.imageUrl} 
-                          alt={item.title} 
-                          className="w-full h-24 object-cover rounded-lg mb-2"
-                          referrerPolicy="no-referrer"
-                        />
-                        <p className="text-xs font-bold text-slate-800 line-clamp-1">{item.title}</p>
-                        <div className="flex items-center gap-1 mt-1 text-[10px]">
-                          <MapPin className="w-3 h-3 text-secondary" />
-                          <span className="text-slate-400 capitalize truncate">{item.location}</span>
-                        </div>
-                        <div className="mt-2.5 flex gap-1.5 justify-between">
-                          <button
-                            onClick={() => onSelectItem(item)}
-                            className="bg-primary hover:bg-primary-container text-white text-[9px] font-bold px-2.5 py-1 rounded-sm w-full transition-all cursor-pointer"
-                          >
-                            Consulter
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Instruction widget if no markers are selected */}
-            <div className="absolute bottom-4 left-4 right-4 max-w-sm mx-auto bg-white/95 backdrop-blur-xs p-3.5 rounded-xl text-center border border-slate-200 shadow-lg text-xs leading-relaxed text-slate-500">
-              💡 Cliquez sur les repères de la carte pour consulter les détails des objets proposés et entrer en contact avec les donateurs.
+          {/* Warning banner if GPS loading or failed */}
+          {gpsLoading && (
+            <div className="absolute top-16 left-4 bg-amber-500 text-white text-[10px] py-1.5 px-3 rounded-full backdrop-blur-xs font-sans font-medium z-20 animate-pulse">
+              Recherche de votre position GPS...
             </div>
+          )}
+
+          {/* Floating help widget */}
+          <div className="absolute bottom-4 left-4 right-4 max-w-sm mx-auto bg-white/95 backdrop-blur-xs p-3.5 rounded-xl text-center border border-slate-200 shadow-lg text-xs leading-relaxed text-slate-500 flex items-center justify-center gap-2 z-20">
+            <MapPin className="w-4 h-4 text-primary shrink-0" />
+            Cliquez sur les repères bleus pour voir le détail des dons géolocalisés.
           </div>
-        )}
+        </div>
 
         {/* VIEW 2: LIST VIEW */}
         {viewMode === 'list' && (
-          <div className="absolute inset-0 overflow-y-auto w-full h-full p-4 pt-16 pb-20">
+          <div className="absolute inset-0 overflow-y-auto w-full h-full p-4 pt-16 pb-20 z-10">
             {filteredItems.length === 0 ? (
               <div className="py-16 text-center text-slate-400 max-w-md mx-auto space-y-3">
                 <AlertCircle className="w-12 h-12 text-slate-300 mx-auto" />
                 <p className="font-semibold text-slate-700">Aucun résultat trouvé sur la liste</p>
-                <p className="text-xs text-slate-400">Essayez d'élargir vos termes de recherche ou sélectionnez un autre badge filtre pour actualiser.</p>
+                <p className="text-xs text-slate-400">Essayez de modifier votre rayon de recherche ou sélectionnez une autre catégorie.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto">
@@ -268,9 +373,16 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
                           </span>
                         </div>
                         
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1">
-                          <MapPin className="w-3.5 h-3.5 text-primary" />
-                          <span>{item.location} • Publié {item.timePosted}</span>
+                        <div className="flex flex-col gap-1 mt-1">
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                            <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
+                            <span className="truncate">{item.location} • Publié {item.timePosted}</span>
+                          </div>
+                          {item.distance !== undefined && (
+                            <span className="text-[11px] text-emerald-600 font-semibold mt-0.5">
+                              À {item.distance} km de vous
+                            </span>
+                          )}
                         </div>
                         
                         <p className="text-xs text-slate-500 line-clamp-2 mt-2 leading-relaxed font-light">
@@ -300,7 +412,6 @@ export default function ExploreView({ items, onSelectItem, onRequestItem }: Expl
             )}
           </div>
         )}
-
       </div>
     </div>
   );

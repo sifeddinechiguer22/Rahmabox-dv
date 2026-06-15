@@ -33,6 +33,9 @@ export interface DonationItem {
   status: LoanStatus;
   donorName: string;
   coordinates: { x: number; y: number }; // Percentage offsets for map view
+  latitude?: number;
+  longitude?: number;
+  distance?: number;
 }
 
 export interface ChatMessage {

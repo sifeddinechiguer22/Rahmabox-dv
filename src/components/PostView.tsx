@@ -9,7 +9,7 @@ import { DonationItem, ItemCondition, UserRole, UserProfile } from '../types';
 
 interface PostViewProps {
   userProfile: UserProfile;
-  onAddItem: (newItem: Omit<DonationItem, 'id' | 'timePosted' | 'status' | 'donorName' | 'coordinates'>) => void;
+  onAddItem: (newItem: Omit<DonationItem, 'id' | 'timePosted' | 'status' | 'donorName' | 'coordinates'> & { imageFile?: File | null }) => void;
   onChangeTab: (tab: 'home' | 'explore' | 'post' | 'messages' | 'profile') => void;
 }
 
@@ -21,7 +21,35 @@ export default function PostView({ userProfile, onAddItem, onChangeTab }: PostVi
   const [description, setDescription] = useState<string>('');
   const [location, setLocation] = useState<string>(userProfile.city || 'Downtown, NY');
   const [imageUrl, setImageUrl] = useState<string>('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [selectedPresetIdx, setSelectedPresetIdx] = useState<number | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const [latitude, setLatitude] = useState<number>(33.5731);
+  const [longitude, setLongitude] = useState<number>(-7.5898);
+  const [gpsLoading, setGpsLoading] = useState<boolean>(false);
+
+  const requestGps = () => {
+    if ('geolocation' in navigator) {
+      setGpsLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLatitude(position.coords.latitude);
+          setLongitude(position.coords.longitude);
+          setGpsLoading(false);
+        },
+        (error) => {
+          console.warn("Geolocation failed:", error);
+          setGpsLoading(false);
+        }
+      );
+    }
+  };
+
+  // Retrieve user GPS position automatically on mount
+  React.useEffect(() => {
+    requestGps();
+  }, []);
 
   // High quality curated presets to simulate rapid mock donation listings with beautiful images
   const samplePresets = [
@@ -68,19 +96,23 @@ export default function PostView({ userProfile, onAddItem, onChangeTab }: PostVi
     setDescription(preset.description);
     setImageUrl(preset.imageUrl);
     setLocation(preset.location);
+    setImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleCustomUpload = () => {
-    // Generate randomized catalog image
-    const customImages = [
-      "https://images.unsplash.com/photo-1517705008128-361805f42e86?auto=format&fit=crop&q=80&w=600", // backpack
-      "https://images.unsplash.com/photo-1565814636199-ae8133055c1c?auto=format&fit=crop&q=80&w=600", // shoes
-      "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&q=80&w=600", // camera
-    ];
-    const roll = Math.floor(Math.random() * customImages.length);
-    setImageUrl(customImages[roll]);
-    setTitle("Aspirant Don Utile de " + userProfile.fullName);
-    setSelectedPresetIdx(999); // Custom marker
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      setImageUrl(URL.createObjectURL(file));
+      setSelectedPresetIdx(999); // Custom marker
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -96,10 +128,13 @@ export default function PostView({ userProfile, onAddItem, onChangeTab }: PostVi
     onAddItem({
       title,
       category,
-      condition: condition === 'none' ? 'good' : condition,
+      condition: ((condition as string) === 'none' ? 'good' : condition) as ItemCondition,
       location,
       imageUrl: finalImage,
-      description: description || "Objet charitable proposé par l'utilisateur enregistré du portail RahmaBox."
+      description: description || "Objet charitable proposé par l'utilisateur enregistré du portail RahmaBox.",
+      latitude,
+      longitude,
+      imageFile,
     });
 
     setStep(2); // Go to success confirmation screen
@@ -157,6 +192,13 @@ export default function PostView({ userProfile, onAddItem, onChangeTab }: PostVi
           {/* Picture simulation field */}
           <div className="space-y-3">
             <label className="text-sm font-semibold text-slate-800 block">Photo de l'objet (unitaire)</label>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept="image/*"
+              className="hidden"
+            />
             <div className="flex gap-4">
               
               {/* Manual/Preset upload button click target */}
@@ -175,7 +217,14 @@ export default function PostView({ userProfile, onAddItem, onChangeTab }: PostVi
                   <img src={imageUrl} alt="Donation item preview" className="w-full h-full object-cover" />
                   <button
                     type="button"
-                    onClick={() => { setImageUrl(''); setSelectedPresetIdx(null); }}
+                    onClick={() => {
+                      setImageUrl('');
+                      setImageFile(null);
+                      setSelectedPresetIdx(null);
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
                     className="absolute top-1 right-1 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 focus:outline-hidden"
                   >
                     <span className="text-[10px] font-bold px-1 block leading-none">×</span>
@@ -289,6 +338,29 @@ export default function PostView({ userProfile, onAddItem, onChangeTab }: PostVi
                 placeholder="Ex : Brooklyn, NY"
                 className="w-full h-12 px-4 bg-white border border-slate-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/15 transition-all text-sm outline-hidden placeholder:text-slate-400"
               />
+            </div>
+
+            {/* GPS coordinates status badge */}
+            <div className="mt-3 p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${gpsLoading ? 'bg-amber-500 animate-pulse' : latitude !== 33.5731 ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                <span className="text-xs font-medium text-slate-600">
+                  {gpsLoading 
+                    ? 'Acquisition de votre position GPS...' 
+                    : latitude !== 33.5731 
+                      ? 'Localisation GPS acquise automatiquement ✓' 
+                      : 'Position par défaut (autorisation refusée)'}
+                </span>
+              </div>
+              {!gpsLoading && (
+                <button
+                  type="button"
+                  onClick={requestGps}
+                  className="text-xs text-primary font-bold hover:underline cursor-pointer bg-transparent border-none p-0 focus:outline-hidden"
+                >
+                  Actualiser
+                </button>
+              )}
             </div>
           </div>
 

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Menu, Bell, Search, PlusCircle, ArrowRight, MapPin, Sparkles, AlertCircle } from 'lucide-react';
+import { Menu, Bell, Search, PlusCircle, ArrowRight, MapPin, Sparkles, AlertCircle, Shirt, Sofa, Plug, Gamepad2, BookOpen, HandHeart } from 'lucide-react';
 import { DonationItem, ActiveTab } from '../types';
 import { motion } from 'motion/react';
 
@@ -21,12 +21,12 @@ export default function HomeView({ items, onSelectItem, onChangeTab, donorCount 
 
   // Categories defined as in the screenshots
   const categories = [
-    { id: 'all', label: 'Tout', icon: Sparkles, color: 'bg-primary-container text-on-primary-container' },
-    { id: 'clothing', label: 'Vêtements', icon: 'apparel', emoji: '👕' },
-    { id: 'furniture', label: 'Mobilier', icon: 'chair', emoji: '🛋️' },
-    { id: 'appliances', label: 'Électroménager', icon: 'iron', emoji: '🔌' },
-    { id: 'toys', label: 'Jouets', icon: 'toys', emoji: '🧸' },
-    { id: 'education', label: 'Éducation', icon: 'menu_book', emoji: '📚' },
+    { id: 'all', label: 'Tout', icon: <Sparkles className="w-6 h-6" /> },
+    { id: 'clothing', label: 'Vêtements', icon: <Shirt className="w-6 h-6" /> },
+    { id: 'furniture', label: 'Mobilier', icon: <Sofa className="w-6 h-6" /> },
+    { id: 'appliances', label: 'Électroménager', icon: <Plug className="w-6 h-6" /> },
+    { id: 'toys', label: 'Jouets', icon: <Gamepad2 className="w-6 h-6" /> },
+    { id: 'education', label: 'Éducation', icon: <BookOpen className="w-6 h-6" /> },
   ];
 
   // Filter items based on category and search query
@@ -116,7 +116,7 @@ export default function HomeView({ items, onSelectItem, onChangeTab, donorCount 
                     ? 'bg-secondary text-white shadow-md ring-4 ring-emerald-50' 
                     : 'bg-surface-container-high text-slate-700 hover:bg-surface-container-highest'
                 }`}>
-                  <span className="text-2xl leading-none">{cat.emoji || '📦'}</span>
+                  {cat.icon}
                 </div>
                 <span className={`text-xs font-medium truncate max-w-[85px] ${isActive ? 'text-secondary font-bold' : 'text-slate-600'}`}>
                   {cat.label}
@@ -130,8 +130,8 @@ export default function HomeView({ items, onSelectItem, onChangeTab, donorCount 
       {/* Impact Progress Section */}
       <section className="px-4">
         <div className="bg-surface-container-low border border-slate-200/80 p-5 rounded-2xl flex flex-col sm:flex-row items-center sm:items-stretch gap-4 relative overflow-hidden shadow-xs">
-          <div className="absolute -right-6 -bottom-6 opacity-8 text-secondary pointer-events-none">
-            <span className="text-8xl">🤝</span>
+          <div className="absolute -right-6 -bottom-6 opacity-10 text-secondary pointer-events-none">
+            <HandHeart className="w-24 h-24" />
           </div>
           
           <div className="flex-1 w-full space-y-3">

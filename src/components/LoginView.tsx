@@ -5,9 +5,20 @@
 
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff, Shield, ArrowRight, HeartHandshake } from 'lucide-react';
+import { API_BASE_URL, initializeCsrfToken, getCsrfToken } from '../api';
+import { frontendRoleFromBackend } from '../services/apiService';
+import { signInWithGoogle } from '../firebase';
+import { UserRole } from '../types';
 
 interface LoginViewProps {
-  onLoginSuccess: (email: string, name: string) => void;
+  onLoginSuccess: (data: {
+    fullName: string;
+    email: string;
+    phone: string;
+    city: string;
+    role: UserRole;
+    token?: string;
+  }) => void;
   onNavigateToSignup: () => void;
 }
 
@@ -17,25 +28,79 @@ export default function LoginView({ onLoginSuccess, onNavigateToSignup }: LoginV
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    setIsGoogleLoading(true);
+    setErrorMessage('');
+    try {
+      const googleUser = await signInWithGoogle();
+      onLoginSuccess({
+        fullName: googleUser.fullName,
+        email: googleUser.email,
+        phone: googleUser.phone,
+        city: googleUser.city,
+        role: frontendRoleFromBackend(googleUser.role),
+        token: googleUser.token,
+      });
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Échec de la connexion Google.');
+      setIsGoogleLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
 
     setIsLoading(true);
+    setErrorMessage('');
 
-    // Simulate standard authentication delay and feedback sequence
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      await initializeCsrfToken();
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': getCsrfToken(),
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        const apiError = payload.message ||
+          (payload.errors ? Object.values(payload.errors).flat()[0] : undefined) ||
+          'Échec de la connexion.';
+        setErrorMessage(apiError);
+        setIsLoading(false);
+        return;
+      }
+
+      const user = payload.data;
+      const frontendRole = frontendRoleFromBackend(user.role || 'donateur');
+
       setIsSuccess(true);
-      
       setTimeout(() => {
-        // extract name from email or set default
-        const userName = email.split('@')[0];
-        const readableName = userName.charAt(0).toUpperCase() + userName.slice(1);
-        onLoginSuccess(email, readableName || "John Doe");
-      }, 800);
-    }, 1200);
+        onLoginSuccess({
+          fullName: user.name || email.split('@')[0],
+          email: user.email,
+          phone: user.phone || '+33 6 00 00 00 00',
+          city: user.city || 'Casablanca',
+          role: frontendRole,
+          token: payload.token,
+        });
+      }, 700);
+    } catch (error) {
+      setErrorMessage('Impossible de contacter le serveur.');
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -138,7 +203,11 @@ export default function LoginView({ onLoginSuccess, onNavigateToSignup }: LoginV
               )}
             </button>
           </div>
-
+          {errorMessage && (
+            <div className="text-sm text-rose-600 font-medium px-2 py-2 rounded-xl bg-rose-50 border border-rose-100">
+              {errorMessage}
+            </div>
+          )}
         </form>
 
         {/* Separator block */}
@@ -148,23 +217,19 @@ export default function LoginView({ onLoginSuccess, onNavigateToSignup }: LoginV
           <div className="flex-grow border-t border-slate-200"></div>
         </div>
 
-        {/* Alternate Social Signups mock panels */}
-        <div className="grid grid-cols-2 gap-3 shrink-0">
-          <button 
+        <div className="grid grid-cols-1 gap-3 shrink-0">
+          <button
             type="button"
-            onClick={() => onLoginSuccess("volunteer@rahmabox.org", "Association Rahma")}
-            className="flex items-center justify-center gap-2 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-xs font-semibold cursor-pointer text-slate-700 bg-white"
+            onClick={handleGoogleLogin}
+            disabled={isGoogleLoading}
+            className="flex items-center justify-center gap-3 py-3 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-sm font-semibold cursor-pointer text-slate-700 bg-white disabled:opacity-60"
           >
-            <img alt="Google emblem" className="w-4 h-4" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAD9sL8ywwnxctbzUeNv06b1biSLA00sfv2DDcjlusPuuk1l_zw9WqgnfLhPoizYTAGHmPgP9reSHubZ4kTjn8mta5eHbRkCYKreYLqHWh_z1YrMg6YyxW2HyWj-R7LD7qL7tjoCBdy1BlpYZLqkrhT3Wt49QjMg9s2DMNqzIp6qRVR7gWxBu55E-Bi1PcyKqQeckt1KZyreMQ3xza6xGeRkAaU5N9vkUGmrih8DxSUQo68RGMVeCphNdA6Mez6SDWGQpENq988M8Qm" />
-            <span>Google</span>
-          </button>
-          <button 
-            type="button"
-            onClick={() => onLoginSuccess("benevole@ahmabox.org", "Bénévole Solidaire")}
-            className="flex items-center justify-center gap-2 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-xs font-semibold cursor-pointer text-slate-700 bg-white"
-          >
-            <span className="text-[#1877F2] font-semibold text-sm leading-none shrink-0">f</span>
-            <span>Facebook</span>
+            {isGoogleLoading ? (
+              <span className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></span>
+            ) : (
+              <img alt="Google" className="w-5 h-5" src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" />
+            )}
+            Continuer avec Google
           </button>
         </div>
 
